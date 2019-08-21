@@ -1,74 +1,29 @@
 import asyncio
-import os, sys
+import os
+import sys
+import shutil
 import subprocess
 
 import json
 import webbrowser
 import logging
+import time
 
-from autobahn.asyncio.websocket import WebSocketServerFactory, WebSocketServerProtocol
-from autobahn.websocket.types import ConnectionDeny
+from sofi.ui import Element
 
-
-class SofiEventProtocol(WebSocketServerProtocol):
-    """WebSocket / UI event handler instantiated for each connection"""
-
-    def onConnect(self, request):
-        """Triggered when a new WebSocket client (UI layer) attempts to connect"""
-
-        logging.info("Client connecting: %s" % request.peer)
-
-        if self.app.singleclient and len(self.app.clients) == 1:
-            logging.info("Running in Single client mode - extra connection request rejected")
-            raise ConnectionDeny(403)
-
-        self.app.clients.append(self)
-
-    def onOpen(self):
-        """Triggered when a connection is established"""
-
-        logging.info("WebSocket connection open")
-
-    async def onMessage(self, payload, isBinary):
-        """Called whenever a new message is received"""
-
-        if isBinary:
-            logging.info("Binary message received: {} bytes".format(len(payload)))
-        else:
-            logging.info("Text message received: {}".format(payload.decode('utf-8')))
-            body = json.loads(payload.decode('utf-8'))
-
-            if 'event' in body:
-                await self.app.process(self, body)
-                return
-
-    def onClose(self, wasClean, code, reason):
-        """Called when the client closes the connection"""
-
-        logging.info("WebSocket connection closed: {}".format(reason))
-
-        # Exit the application if only listening to one client
-        if self.app.singleclient and self.app.clients[0] == self:
-            # TODO: This should probably be cleaner
-            exit(0)
-
-    def dispatch(self, command):
-        """Send a command to the client / UI layer"""
-
-        self.sendMessage(bytes(json.dumps(command), 'utf-8'), False)
+import websockets
+from threading import Thread
 
 
 class Sofi():
 
-    def __init__(self, singleclient=True, hostname="127.0.0.1", address="0.0.0.0", port=9000, protocol=SofiEventProtocol):
+    def __init__(self, singleclient=True, background=False, hostname="127.0.0.1", address="0.0.0.0", port=9000):
         # General application configuration info
         self.hostname = hostname
         self.address = address
         self.port = port
-
-        # Protocol class that will manage messaging
-        self.protocol = protocol
-        protocol.app = self
+        self.background = background
+        self.thread = None
 
         # Event handlers
         self.handlers = {
@@ -83,77 +38,44 @@ class Sofi():
             'keypress': {'_': set()}
         }
 
+        self.requests = {}
+
         # Client management
         self.clients = list()
         self.singleclient = singleclient
 
-        # Create the factory that generates protocols to handle socket communications
-        factory = WebSocketServerFactory("ws://" + hostname + ":" + str(port))
-        factory.protocol = protocol
+        if self.background:
+            # Make a new asyncio event loop
+            self.loop = asyncio.new_event_loop()
 
-        # Create the Asyncio event loop
-        self.loop = asyncio.get_event_loop()
+            # Make a background thread that sets up the loop
+            self.thread = Thread(target=self.__run_loop)
+
+        else:
+            # Get the current asyncio event loop
+            self.loop = asyncio.get_event_loop()
+
+    def __run_loop(self):
+        # Set event loop
+        if self.background:
+            logging.info("Running in background")
+            asyncio.set_event_loop(self.loop)
 
         # Create the loop server
-        self.server = self.loop.create_server(factory, address, port)
-
-    def start(self, desktop=True, browser=True):
-        """Start the application"""
-
-        self.loop.run_until_complete(self.server)
+        self.server = self.loop.run_until_complete(websockets.serve(self.handler, self.address, self.port))
 
         try:
-            # Automatically open the browser if requested
-            if desktop:
-                if browser:
-                    # path = os.path.dirname(os.path.realpath(__file__))
-                    if getattr(sys, 'frozen', False):
-                        # we are running in a bundle
-                        path = sys._MEIPASS
-                        webbrowser.open('file:///' + os.path.join(path, 'sofi/app/main.html'))
-                    else:
-                        # we are running in a normal Python environment
-                        path = os.path.dirname(os.path.realpath(__file__))
-                        webbrowser.open('file:///' + os.path.join(path, 'main.html'))
-                else:
-                    if getattr(sys, 'frozen', False):
-                        # we are running in a bundle
-                        path = sys._MEIPASS
-                        if sys.platform == 'linux':
-                            pass
-                        elif sys.platform == 'windows':
-                            pass
-                        else:
-                            # Assume Mac?
-                            subprocess.Popen([os.path.join(path, 'browser.app/Contents/MacOS/cefsimple'),
-                                              '--url=file://' + os.path.join(path, 'sofi/app/main.html')])
-                    else:
-                        # we are running in a normal Python environment
-                        path = os.path.dirname(os.path.realpath(__file__))
-                        if sys.platform == 'linux':
-                            pass
-                        elif sys.platform == 'windows':
-                            pass
-                        else:
-                            # Assume Mac?
-                            subprocess.Popen([os.path.join(path, '../../browser.app/Contents/MacOS/cefsimple'),
-                                              '--url=file:///' + os.path.join(path, 'main.html')])
-
-
-            # Start listening for connections
+            logging.info("Starting server")
             self.loop.run_forever()
 
         except KeyboardInterrupt:
             logging.info("Keyboard Interrupt received.")
 
-            # Tell any clients that we're closing
-            for client in self.clients:
-                client.sendClose()
-                pass
-
-            self.server.close()
-
         finally:
+            # Tell any clients that we're closing
+            self.server.close()
+            self.loop.run_until_complete(asyncio.sleep(0.1))
+
             # Gather any remaining tasks so we can cancel them
             asyncio.gather(*asyncio.Task.all_tasks()).cancel()
             self.loop.stop()
@@ -163,6 +85,103 @@ class Sofi():
 
             logging.info("Stopping Server...")
             self.loop.close()
+
+    async def handler(self, websocket, path):
+        """Called whenever a new message is received"""
+
+        if self.singleclient and len(self.clients) == 1:
+            websocket.close(reason="Only one client allowed in single-client mode.")
+
+        self.clients.append(websocket)
+        logging.info(f"New client connected from {websocket.remote_address}")
+
+        async for msg in websocket:
+            try:
+                logging.debug(f"Message received: {msg}")
+                body = json.loads(msg)
+
+                if 'event' in body:
+                    await self.process(websocket, body)
+
+            except Exception as e:
+                logging.exception(f"Exception when handling message {msg} from client {websocket.remote_address}")
+
+        self.clients.remove(websocket)
+
+    def dispatch(self, command, client=None):
+        """Send a command to the UI layer"""
+
+        if 'request_id' in command:
+            self.requests[command['request_id']] = None
+
+        command = json.dumps(command)
+
+        if self.singleclient:
+            # asyncio.gather(self.clients[0].send(command), loop=self.loop)
+            asyncio.run_coroutine_threadsafe(self.clients[0].send(command), self.loop)
+
+        else:
+            if client is None:
+                asyncio.run_coroutine_threadsafe(asyncio.gather(*[c.send(command) for c in self.clients], loop=self.loop))
+            else:
+                # asyncio.gather(client.send(command), loop=self.loop)
+                asyncio.run_coroutine_threadsafe(client.send(command), self.loop)
+
+    def start(self, desktop=True, browser=True):
+        """Start the application"""
+
+        if getattr(sys, 'frozen', False):
+            # we are running in a bundle
+            path = sys._MEIPASS
+        else:
+            path = os.path.dirname(os.path.realpath(__file__))
+
+        # Automatically open the browser if requested
+        if desktop:
+            if browser:
+                if getattr(sys, 'frozen', False):
+                    # we are running in a bundle
+                    webbrowser.open('file:///' + os.path.join(path, 'sofi/app/main.html'))
+                else:
+                    # we are running in a normal Python environment
+                    webbrowser.open('file:///' + os.path.join(path, 'main.html'))
+            else:
+                if getattr(sys, 'frozen', False):
+                    # we are running in a bundle
+                    if sys.platform == 'linux':
+                        pass
+                    elif sys.platform == 'windows':
+                        pass
+                    else:
+                        # Assume Mac
+                        subprocess.Popen([os.path.join(path, 'browser.app/Contents/MacOS/cefsimple'),
+                        '--url=file://' + os.path.join(path, 'sofi/app/main.html')])
+                else:
+                    # we are running in a normal Python environment
+                    if sys.platform == 'linux':
+                        pass
+                    elif sys.platform == 'windows':
+                        pass
+                    else:
+                        # Assume Mac
+                        subprocess.Popen([os.path.join(path, '../../browser.app/Contents/MacOS/cefsimple'),
+                        '--url=file:///' + os.path.join(path, 'main.html')])
+
+        with open(os.path.join(path, '_sofi.js'), 'rb') as source:
+            jsfile = os.path.join(path, 'sofi.js')
+
+            if os.path.exists(jsfile):
+                os.remove(jsfile)
+
+            with open(jsfile, 'wb') as f:
+                f.write(bytes('var SOCKET_URL = "ws://' + self.hostname + ":" + str(self.port) + '/"\n', 'utf-8'))
+                shutil.copyfileobj(source, f)
+
+        if self.background:
+            self.thread.start()
+
+        else:
+            self.__run_loop()
 
     def register(self, event, callback, selector=None, client=None):
         """Register an event callback"""
@@ -185,11 +204,8 @@ class Sofi():
         self.handlers[event][key].add(callback)
 
         if event not in ('init', 'load', 'close') and len(self.handlers[event].keys()) > 1:
-            if self.singleclient or client is None:
-                client = self.clients[0]
-
             # Tell the UI layer to subscribe to this event
-            client.dispatch({'name': 'subscribe', 'event': event, 'selector': selector, 'capture': capture, 'key': str(id(callback)) + selector})
+            self.dispatch({'name': 'subscribe', 'event': event, 'selector': selector, 'capture': capture, 'key': str(id(callback)) + selector}, client)
 
     def unregister(self, event, callback, selector=None, client=None):
         """Remove an event callback"""
@@ -205,25 +221,20 @@ class Sofi():
                 handler_list.remove(callback)
 
         if event not in ('init', 'load', 'close'):
-            if self.singleclient or client is None:
-                client = self.clients[0]
-
             # Tell the UI layer to unsubscribe from this event
-            client.dispatch({'name': 'unsubscribe', 'event': event, 'selector': selector, 'key': str(id(callback)) + selector})
+            self.dispatch({'name': 'unsubscribe', 'event': event, 'selector': selector, 'key': str(id(callback)) + selector}, client)
 
-    def dispatch(self, command):
-        """Send a command to the UI layer. Only use in singleclient mode"""
-
-        if self.singleclient:
-            self.clients[0].dispatch(command)
-        else:
-            raise NotImplementedError("Using Sofi.dispatch with more than one client can have unintended consequences and is not supported")
-
-    async def process(self, protocol, event):
+    async def process(self, client, event):
         """Process a new event"""
 
         eventtype = event['event']
-        event['client'] = protocol
+        event['client'] = client
+
+        if eventtype == 'response':
+            # We receive a response to a specific property, attr or text request
+            if 'request_id' in event:
+                self.requests[event['request_id']] = event
+                return
 
         if eventtype in self.handlers:
             # Check for local handler
@@ -233,89 +244,103 @@ class Sofi():
                 if key in self.handlers[eventtype]:
                     for handler in list(self.handlers[eventtype][key]):
                         if callable(handler):
-                            await handler(event)
+                            asyncio.run_coroutine_threadsafe(handler(event), self.loop)
 
             # Check for global handler
             for handler in list(self.handlers[eventtype]['_']):
                 if callable(handler):
-                    await handler(event)
+                    asyncio.run_coroutine_threadsafe(handler(event), self.loop)
+
+    async def _waitforresponse(self, request_id, item):
+        """Wait for a response to a specific request"""
+
+        while self.requests[request_id] is None:
+            await asyncio.sleep(0.01)
+
+        resp = self.requests[request_id]
+        del self.requests[request_id]
+
+        logging.debug(f"Response received: {resp}")
+
+        return resp.get(item, None)
 
     def load(self, html, client=None):
         """Initialize the UI. This will replace the document <html> tag contents with the supplied html."""
 
-        if client is None:
-            client = self.clients[0]
+        if isinstance(html, Element):
+            html = str(html)
 
-        client.dispatch({'name': 'init', 'html': html})
+        self.dispatch({'name': 'init', 'html': html}, client)
 
     def append(self, selector, html, client=None):
         """Append the given html to all elements matching this selector"""
 
-        if client is None:
-            client = self.clients[0]
+        if isinstance(html, Element):
+            html = str(html)
 
-        client.dispatch({'name': 'append', 'selector': selector, 'html': html})
+        self.dispatch({'name': 'append', 'selector': selector, 'html': html}, client)
 
     def remove(self, selector, client=None):
         """Remove the elements matching this selector."""
 
-        if client is None:
-            client = self.clients[0]
-
-        client.dispatch({'name': 'remove', 'selector': selector})
+        self.dispatch({'name': 'remove', 'selector': selector}, client)
 
     def replace(self, selector, html, client=None):
         """Replace the contents all elements matching this selector with the given html."""
 
-        if client is None:
-            client = self.clients[0]
+        if isinstance(html, Element):
+            html = str(html)
 
-        client.dispatch({'name': 'replace', 'selector': selector, 'html': html})
+        self.dispatch({'name': 'replace', 'selector': selector, 'html': html}, client)
 
     def addclass(self, selector, cl, client=None):
         """Add the given class from all elements matching this selector."""
 
-        if client is None:
-            client = self.clients[0]
-
-        client.dispatch({'name': 'addclass', 'selector': selector, 'cl': cl})
+        self.dispatch({'name': 'addclass', 'selector': selector, 'cl': cl}, client)
 
     def removeclass(self, selector, cl, client=None):
         """Remove the given class from all elements matching this selector."""
 
-        if client is None:
-            client = self.clients[0]
+        self.dispatch({'name': 'removeclass', 'selector': selector, 'cl': cl}, client)
 
-        client.dispatch({'name': 'removeclass', 'selector': selector, 'cl': cl})
+    async def gettext(self, selector, client=None):
+        """Get the text for elements matching the selector."""
 
-    def text(self, selector, text, client=None):
+        logging.info("TEXT")
+        request_id = time.time()
+        self.dispatch({'name': 'text', 'request_id': request_id, 'selector': selector, 'text': None}, client)
+        return await self._waitforresponse(request_id, 'text')
+
+    def settext(self, selector, text, client=None):
         """Set the text for elements matching the selector."""
 
-        if client is None:
-            client = self.clients[0]
+        self.dispatch({'name': 'text', 'selector': selector, 'text': text}, client)
 
-        client.dispatch({'name': 'text', 'selector': selector, 'text': text})
+    async def getattribute(self, selector, attr, client=None):
+        """Get the attribute for elements matching this selector."""
 
-    def attr(self, selector, attr, value, client=None):
+        request_id = time.time()
+        self.dispatch({'name': 'attr', 'request_id': request_id, 'selector': selector, 'attr': attr, 'value': None}, client)
+        return await self._waitforresponse(request_id, 'attr')
+
+    def setattribute(self, selector, attr, value, client=None):
         """Set the attribute for elements matching this selector."""
 
-        if client is None:
-            client = self.clients[0]
-
-        client.dispatch({'name': 'attr', 'selector': selector, 'attr': attr, 'value': value})
+        self.dispatch({'name': 'attr', 'selector': selector, 'attr': attr, 'value': value}, client)
 
     def style(self, selector, style, value, priority=None, client=None):
         """Set the style for elements matching this selector. The priority field can be set to "important" to force the style."""
 
-        if client is None:
-            client = self.clients[0]
+        self.dispatch({'name': 'style', 'selector': selector, 'style': style, 'value': value, 'priority': priority}, client)
 
-        client.dispatch({'name': 'style', 'selector': selector, 'style': style, 'value': value, 'priority': priority})
+    async def getproperty(self, selector, property, client=None):
+        """Get the property for elements matching this selector. Properties are special attributes like 'checked' or 'value'."""
 
-    def property(self, selector, property, value, client=None):
+        request_id = time.time()
+        self.dispatch({'name': 'property', 'request_id': request_id, 'selector': selector, 'property': property, 'value': None}, client)
+        return await self._waitforresponse(request_id, 'prop')
+
+    def setproperty(self, selector, property, value, client=None):
         """Set the property for elements matching this selector. Properties are special attributes like 'checked' or 'value'."""
 
-        if client is None:
-            client = self.clients[0]
-
-        client.dispatch({'name': 'attr', 'selector': selector, 'property': property, 'value': value})
+        self.dispatch({'name': 'property', 'selector': selector, 'property': property, 'value': value}, client)

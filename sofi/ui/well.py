@@ -1,14 +1,13 @@
 from .element import Element
 from .div import Div
 
-class Well(Element):
+class Well(Div):
     """Implements the Bootstrap Well <div class="well">"""
 
     def __init__(self, text=None, size=None, cl=None, ident=None, style=None, attrs=None):
-        super().__init__(cl=cl, ident=ident, style=style, attrs=attrs)
+        super().__init__(text=text, cl=cl, ident=ident, style=style, attrs=attrs)
 
         self.size = size
-        self.text = text
 
     def __repr__(self):
         return "<Well(text='" + self.text + "')>"
@@ -25,5 +24,6 @@ class Well(Element):
         if self.cl:
             classes.append(self.cl)
 
-        return str(Div(text=self.text, cl=" ".join(classes), ident=self.ident, style=self.style,
-                    attrs=self.attrs))
+        self.cl = ' '.join(classes)
+
+        return super().__str__()

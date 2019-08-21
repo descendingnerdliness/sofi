@@ -1,4 +1,7 @@
 [![Build Status](https://travis-ci.org/tryexceptpass/sofi.svg?branch=master)](https://travis-ci.org/tryexceptpass/sofi) [![Stories in Ready](https://badge.waffle.io/tryexceptpass/sofi.png?label=ready&title=Tasks%20Ready)](https://waffle.io/tryexceptpass/sofi) [![Join the chat at https://gitter.im/try-except-pass/sofi](https://badges.gitter.im/try-except-pass/sofi.svg)](https://gitter.im/try-except-pass/sofi?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
+[![Documentation Status](https://readthedocs.org/projects/sofi-gui-framework/badge/?version=latest)](http://sofi-gui-framework.readthedocs.io/en/latest/?badge=latest)
+[![Say Thanks!](https://img.shields.io/badge/Say%20Thanks-!-1EAEDB.svg)](https://saythanks.io/to/tryexceptpass)
+
 ## Overview
 `sofi` is an OS agnostic UI module for Python.
 
@@ -6,7 +9,7 @@ The main idea is to allow rapid, pythonic GUI development using standard web-bas
 other common HTML5 libraries and package them in such a way that all event processing is done within python using
 `websockets`.
 
-This was developed as an exercise in poking at the underlying technologies and to see what comes out of merging them together. For a better overview of why it came to be, feel free to take a look at this post: [A Python Ate My GUI - Part 3: Implementation](https://medium.com/@tryexceptpass/a-python-ate-my-gui-part-3-implementation-39fc105b6d81#.xzalmtnzs)
+This was developed as an exercise in poking at the underlying technologies and to see what comes out of merging them together. For a better overview of why it came to be, feel free to take a look at this post: [A Python Ate My GUI - Part 3: Implementation](http://tryexceptpass.org/article/a-python-ate-my-gui-3)
 
 We're in a **beta** stage for now, feedback appreciated.
 

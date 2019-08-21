@@ -1,32 +1,56 @@
 from setuptools import setup, find_packages
+from os import path
+
+
+# Get the long description from the README file
+with open(path.join('.', 'README.md'), encoding='utf-8') as f:
+    long_description = f.read()
+
 
 setup(
-    author = "tryexceptpass",
-    author_email = "tryexceptpass@users.noreply.github.com",
+    author="tryexceptpass",
+    author_email="cmedina@tryexceptpass.org",
 
-    name = "sofi",
-    version = "0.1.4",
+    name="sofi",
+    version="0.3.9",
 
-    description = "GUI layer for Python based on WebSockets Bootstrap and D3.js",
-    long_description="Sofi is a Python 3 system that will generate the necessary HTML and JavaScript code typically needed to produce a single-page application and serve it up through WebSockets.\n\nThe webpage functions as a dumb user interface layer on top of your python code by exposing a simple command and event system that allows for communications back and forth with the python logic. The UI itself is generated using Bootstrap components, and enabled by D3.js for processing events and DOM changes.",
+    description="Desktop and Web GUI framework based on WebSockets",
+    long_description=long_description,
+    long_description_content_type='text/markdown',
 
-    url = "https://github.com/tryexceptpass/sofi",
+    url="https://github.com/tryexceptpass/sofi",
 
-    packages = find_packages(),
-    package_data = {
-            'sofi': ['app/main.html', 'app/sofi.js'],
-            'test': ['test.png']
+    packages=find_packages(),
+    package_data={
+        'sofi': ['app/main.html', 'app/_sofi.js'],
+        'test': ['test.png']
     },
 
-    install_requires = [ 'autobahn' ],
+    install_requires=['websockets'],
+    python_requires='>=3.6',
     setup_requires=['pytest-runner'],
     tests_require=['pytest', 'hypothesis'],
 
-    license = "MIT",
-    classifiers = [ 'License :: OSI Approved :: MIT License',
-                   # ADD MORE CLASSIFIERS!
-                    'Development Status :: 4 - Beta',
-                  ],
-    keywords = [ 'websockets', 'javascript', 'bootstrap', 'gui' ]
+    license="MIT",
+    classifiers=['License :: OSI Approved :: MIT License',
+                 'Framework :: AsyncIO',
+                 'Topic :: Internet :: WWW/HTTP',
+                 'Topic :: Internet :: WWW/HTTP :: Dynamic Content',
+                 'Topic :: Multimedia',
+                 'Topic :: Multimedia :: Graphics',
+                 'Topic :: Software Development :: User Interfaces',
 
+                 'Programming Language :: Python :: 3 :: Only',
+                 'Programming Language :: Python :: 3.6',
+
+                 'Development Status :: 4 - Beta',
+                 ],
+    keywords='websockets javascript bootstrap gui unity3d desktop html',
+
+    project_urls={
+        'Gitter Chat': 'https://gitter.im/try-except-pass/sofi',
+        'Say Thanks!': 'https://saythanks.io/to/tryexceptpass',
+        'Source': 'https://github.com/tryexceptpass/sofi',
+        'Documentation': 'http://sofi-gui-framework.readthedocs.io/en/latest/',
+    },
 )
